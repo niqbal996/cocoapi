@@ -46,9 +46,6 @@ __version__ = '2.0'
 
 import json
 import time
-import matplotlib.pyplot as plt
-from matplotlib.collections import PatchCollection
-from matplotlib.patches import Polygon
 import numpy as np
 import copy
 import itertools
@@ -68,7 +65,7 @@ def _isArrayLike(obj):
 
 
 class COCO:
-    def __init__(self, annotation_file=None):
+    def __init__(self, annotation_file=None, phenobench=True):
         """
         Constructor of Microsoft COCO helper class for reading and visualizing annotations.
         :param annotation_file (str): location of annotation file
@@ -81,12 +78,48 @@ class COCO:
         if not annotation_file == None:
             print('loading annotations into memory...')
             tic = time.time()
-            dataset = json.load(open(annotation_file, 'r'))
+            with open(annotation_file, 'r') as f:
+                dataset = json.load(f)
             assert type(dataset)==dict, 'annotation file format {} not supported'.format(type(dataset))
             print('Done (t={:0.2f}s)'.format(time.time()- tic))
             self.dataset = dataset
-            self.createIndex()
+            if phenobench:
+                self.preprocess_pheno()
+                self.createIndex()
+            else:
+                self.createIndex()
 
+    def preprocess_pheno(self):
+        all_annotations = []
+        # num_annotations_per_img = [len(img['segments_info']) for img in self.dataset['annotations']]
+        # total_annotations = sum(num_annotations_per_img)
+        # unique_ann_ids = np.array([i for i in range(total_annotations)])
+        for file in self.dataset['annotations']:
+            for idx in range(len(file['segments_info'])):
+                file['segments_info'][idx]['image_id'] = file['image_id']
+            all_annotations.extend(file['segments_info'])
+
+        # Assign unique annotation IDs to annotations of each image across the dataset
+        # TODO Does this need to be unique across train, val, test splits?
+        # filtered_annotations = copy(all_annotations)
+        print('Assigning unique IDs to phenobench annotations. ')
+        filter_indices = []
+        for idx in range(len(all_annotations)):
+            if all_annotations[idx]['category_id'] == 0:
+                filter_indices.append(idx)
+            all_annotations[idx]['id'] = idx
+
+        
+        # Remove soil category and its corresponding annotations
+        del self.dataset['categories'][0]
+        all_annotations = [all_annotations[i] for i in range(len(all_annotations)) if i not in filter_indices]
+        print('Removed {} annotations out of {} belonging to SOIL category'.format((len(filter_indices)- len(all_annotations)),
+                                                                                   len(filter_indices)))
+        
+
+        self.dataset['annotations'] = all_annotations
+
+        
     def createIndex(self):
         # create index
         print('creating index...')
@@ -94,6 +127,7 @@ class COCO:
         imgToAnns,catToImgs = defaultdict(list),defaultdict(list)
         if 'annotations' in self.dataset:
             for ann in self.dataset['annotations']:
+            # for ann in self.dataset['annotations']['segments_info']:
                 imgToAnns[ann['image_id']].append(ann)
                 anns[ann['id']] = ann
 
@@ -245,6 +279,10 @@ class COCO:
         else:
             raise Exception('datasetType not supported')
         if datasetType == 'instances':
+            import matplotlib.pyplot as plt
+            from matplotlib.collections import PatchCollection
+            from matplotlib.patches import Polygon
+
             ax = plt.gca()
             ax.set_autoscale_on(False)
             polygons = []
@@ -314,7 +352,8 @@ class COCO:
         print('Loading and preparing results...')
         tic = time.time()
         if type(resFile) == str or (PYTHON_VERSION == 2 and type(resFile) == unicode):
-            anns = json.load(open(resFile))
+            with open(resFile) as f:
+                anns = json.load(f)
         elif type(resFile) == np.ndarray:
             anns = self.loadNumpyAnnotations(resFile)
         else:
